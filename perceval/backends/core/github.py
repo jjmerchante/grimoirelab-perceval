@@ -85,8 +85,9 @@ class GitHub(Backend):
         from the GitHub public site.
     :param tag: label used to mark the data
     :param archive: archive to store/retrieve items
+    :param exclude_user_data: do not fetch personal user information from the API
     :param sleep_for_rate: sleep until rate limit is reset
-    :param min_rate_to_sleep: minimun rate needed to sleep until
+    :param min_rate_to_sleep: minimum rate needed to sleep until
          it will be reset
     :param max_retries: number of max retries to a data source
         before raising a RetryError exception
@@ -95,13 +96,13 @@ class GitHub(Backend):
     :param sleep_time: time to sleep in case
         of connection problems
     """
-    version = '0.23.0'
+    version = '0.24.0'
 
     CATEGORIES = [CATEGORY_ISSUE, CATEGORY_PULL_REQUEST, CATEGORY_REPO]
 
     def __init__(self, owner=None, repository=None,
                  api_token=None, base_url=None,
-                 tag=None, archive=None,
+                 tag=None, archive=None, exclude_user_data=False,
                  sleep_for_rate=False, min_rate_to_sleep=MIN_RATE_LIMIT,
                  max_retries=MAX_RETRIES, sleep_time=DEFAULT_SLEEP_TIME,
                  max_items=MAX_CATEGORY_ITEMS_PER_PAGE):
@@ -124,6 +125,7 @@ class GitHub(Backend):
         self.max_items = max_items
 
         self.client = None
+        self.exclude_user_data = exclude_user_data
         self._users = {}  # internal users cache
 
     def search_fields(self, item):
@@ -155,6 +157,9 @@ class GitHub(Backend):
 
         :returns: a generator of issues
         """
+        if self.exclude_user_data:
+            logger.info("Excluding user data. Personal user information won't be collected from the API.")
+
         if not from_date:
             from_date = DEFAULT_DATETIME
         if not to_date:
@@ -501,10 +506,8 @@ class GitHub(Backend):
     def __get_user(self, login):
         """Get user and org data for the login"""
 
-        user = {}
-
-        if not login:
-            return user
+        if not login or self.exclude_user_data:
+            return None
 
         user_raw = self.client.user(login)
         user = json.loads(user_raw)
@@ -963,6 +966,9 @@ class GitHubCommand(BackendCommand):
         group.add_argument('--min-rate-to-sleep', dest='min_rate_to_sleep',
                            default=MIN_RATE_LIMIT, type=int,
                            help="sleep until reset when the rate limit reaches this value")
+        group.add_argument('--exclude-user-data', dest='exclude_user_data',
+                           action='store_true',
+                           help="do not fetch personal user information from the API")
         # GitHub token(s)
         group.add_argument('-t', '--api-token', dest='api_token',
                            nargs='+',
