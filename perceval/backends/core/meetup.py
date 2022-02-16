@@ -24,24 +24,23 @@
 
 import json
 import logging
-import requests
+from datetime import datetime
 
-from grimoirelab_toolkit.datetime import datetime_to_utc
-from grimoirelab_toolkit.uris import urijoin
+
+from grimoirelab_toolkit.datetime import datetime_to_utc, datetime_utcnow
 
 from ...backend import (Backend,
                         BackendCommand,
                         BackendCommandArgumentParser)
 from ...client import HttpClient, RateLimitHandler
-from ...errors import RepositoryError
 from ...utils import DEFAULT_DATETIME
 
 
 CATEGORY_EVENT = "event"
 
 MEETUP_URL = 'https://meetup.com/'
-MEETUP_API_URL = 'https://api.meetup.com/'
-MAX_ITEMS = 200
+MEETUP_API_URL = 'https://api.meetup.com/gql'
+MAX_ITEMS = 10
 
 
 # Range before sleeping until rate limit reset
@@ -49,6 +48,148 @@ MIN_RATE_LIMIT = 1
 
 # Time to avoid too many request exception
 SLEEP_TIME = 30
+
+QUERY_EVENT_FULL = """
+{
+  id
+  title
+  eventUrl
+  description
+  shortDescription
+  dateTime
+  host {
+    id
+    name
+    memberPhoto {
+      id
+      baseUrl
+    }
+  }
+  howToFindUs
+  maxTickets
+  group {
+    id
+    foundedDate
+    joinMode
+    name
+    urlname
+    latitude
+    longitude
+    customMemberLabel
+    topics {
+      urlkey
+      name
+    }
+    stats {
+      memberCounts {
+        all
+      }
+    }
+  }
+  venue {
+    id
+    name
+    address
+    city
+    state
+    postalCode
+    country
+    lat
+    lng
+  }
+  status
+  endTime
+  createdAt
+  going
+  waiting
+}
+"""
+
+QUERY_EVENT_COMMENTS = """
+{
+  comments (offset: %s, limit: %s) {
+    count
+    edges {
+      node {
+        id
+        created
+        likeCount
+        link
+        text
+        member {
+          id
+          name
+          memberPhoto {
+            id
+            baseUrl
+          }
+        }
+      }
+    }     
+  }
+}
+"""
+
+QUERY_EVENT_TICKETS = """
+{
+  tickets (input: {first: %d, after: %s}) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    edges {
+      node {
+        createdAt
+        updatedAt
+        status
+        membership {
+          role
+        }
+        guestsCount
+        user {
+          id
+          name
+          memberPhoto {
+            id
+            baseUrl
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+QUERY_EVENT_DATE = """
+{
+  id
+  dateTime
+}
+"""
+
+QUERY_GROUP_EVENTS_TEMPLATE = """
+{
+  groupByUrlname(urlname: "%s") {
+    %s (input: {first: %d, after: %s}) {
+      count
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      edges {
+        cursor
+        node %s
+      }
+    }
+  }
+}
+"""
+
+QUERY_EVENT_TEMPLATE = """
+{
+  event(id: "%s") %s
+}
+"""
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +203,11 @@ class Meetup(Backend):
 
     :param group: name of the group where data will be fetched
     :param api_token: OAuth2 token to access the API
-    :param max_items:  maximum number of issues requested on the same query
+    :param max_items:  maximum number of events requested on the same query
     :param tag: label used to mark the data
     :param archive: archive to store/retrieve items
     :param sleep_for_rate: sleep until rate limit is reset
-    :param min_rate_to_sleep: minimun rate needed to sleep until
+    :param min_rate_to_sleep: minimum rate needed to sleep until
          it will be reset
     :param sleep_time: time (in seconds) to sleep in case
         of connection problems
@@ -122,7 +263,7 @@ class Meetup(Backend):
 
         from_date = datetime_to_utc(from_date)
 
-        kwargs = {"from_date": from_date, "to_date": to_date}
+        kwargs = {"from_date": from_date}
         items = super().fetch(category,
                               filter_classified=filter_classified,
                               **kwargs)
@@ -138,40 +279,22 @@ class Meetup(Backend):
         :returns: a generator of items
         """
         from_date = kwargs['from_date']
-        to_date = kwargs['to_date']
 
-        logger.info("Fetching events of '%s' group from %s to %s",
-                    self.group, str(from_date),
-                    str(to_date) if to_date else '--')
-
-        to_date_ts = datetime_to_utc(to_date).timestamp() if to_date else None
+        logger.info("Fetching events of '%s' group from %s",
+                    self.group, str(from_date))
 
         nevents = 0
-        stop_fetching = False
+        events = self.client.events(self.group, from_date=from_date)
 
-        ev_pages = self.client.events(self.group, from_date=from_date)
+        for event in events:
+            event_id = event['id']
 
-        for evp in ev_pages:
-            events = [event for event in self.parse_json(evp)]
+            event['comments'] = self.__fetch_and_parse_comments(event_id)
+            event['rsvps'] = self.__fetch_and_parse_rsvps(event_id)
+            event['fetched_on'] = datetime_utcnow().timestamp()
 
-            for event in events:
-                event_id = event['id']
-
-                event['comments'] = self.__fetch_and_parse_comments(event_id)
-                event['rsvps'] = self.__fetch_and_parse_rsvps(event_id)
-
-                # Check events updated before 'to_date'
-                event_ts = self.metadata_updated_on(event)
-
-                if to_date_ts and event_ts >= to_date_ts:
-                    stop_fetching = True
-                    continue
-
-                yield event
-                nevents += 1
-
-            if stop_fetching:
-                break
+            yield event
+            nevents += 1
 
         logger.info("Fetch process completed: %s events fetched", nevents)
 
@@ -179,17 +302,17 @@ class Meetup(Backend):
     def has_archiving(cls):
         """Returns whether it supports archiving items on the fetch process.
 
-        :returns: this backend supports items archive
+        :returns: this backend does not support items archive
         """
-        return True
+        return False
 
     @classmethod
     def has_resuming(cls):
         """Returns whether it supports to resume the fetch process.
 
-        :returns: this backend supports items resuming
+        :returns: this backend does not support items resuming
         """
-        return True
+        return False
 
     @staticmethod
     def metadata_id(item):
@@ -199,20 +322,17 @@ class Meetup(Backend):
 
     @staticmethod
     def metadata_updated_on(item):
-        """Extracts and coverts the update time from a Meetup item.
+        """Extracts and coverts the update time from a Docker Hub item.
 
-        The timestamp is extracted from 'updated' field and converted
-        to a UNIX timestamp.
+        The timestamp is extracted from 'fetched_on' field. This field
+        is not part of the data provided by Meetup. It is added
+        by this backend.
 
         :param item: item generated by the backend
 
         :returns: a UNIX timestamp
         """
-        # Time is in milliseconds, convert it to seconds
-        ts = item['updated']
-        ts = ts / 1000.0
-
-        return ts
+        return item['fetched_on']
 
     @staticmethod
     def metadata_category(item):
@@ -223,20 +343,6 @@ class Meetup(Backend):
         """
         return CATEGORY_EVENT
 
-    @staticmethod
-    def parse_json(raw_json):
-        """Parse a Meetup JSON stream.
-
-        The method parses a JSON stream and returns a list
-        with the parsed data.
-
-        :param raw_json: JSON string to parse
-
-        :returns: a list with the parsed data
-        """
-        result = json.loads(raw_json)
-        return result
-
     def _init_client(self, from_archive=False):
         """Init client"""
 
@@ -245,30 +351,28 @@ class Meetup(Backend):
                             self.archive, from_archive, self.ssl_verify)
 
     def __fetch_and_parse_comments(self, event_id):
-        logger.debug("Fetching and parsing comments from group '%s' event '%s'",
-                     self.group, str(event_id))
+        logger.debug("Fetching and parsing comments from event '%s'",
+                     str(event_id))
 
         comments = []
-        raw_pages = self.client.comments(self.group, event_id)
+        pages = self.client.comments(event_id)
 
-        for raw_page in raw_pages:
-
-            for comment in self.parse_json(raw_page):
-                comments.append(comment)
+        for page in pages:
+            for comment in page:
+                comments.append(comment['node'])
 
         return comments
 
     def __fetch_and_parse_rsvps(self, event_id):
-        logger.debug("Fetching and parsing rsvps from group '%s' event '%s'",
-                     self.group, str(event_id))
+        logger.debug("Fetching and parsing rsvps from event '%s'",
+                     str(event_id))
 
         rsvps = []
-        raw_pages = self.client.rsvps(self.group, event_id)
+        pages = self.client.rsvps(event_id)
 
-        for raw_page in raw_pages:
-
-            for rsvp in self.parse_json(raw_page):
-                rsvps.append(rsvp)
+        for page in pages:
+            for rsvp in page:
+                rsvps.append(rsvp['node'])
 
         return rsvps
 
@@ -284,9 +388,7 @@ class MeetupCommand(BackendCommand):
 
         parser = BackendCommandArgumentParser(cls.BACKEND,
                                               from_date=True,
-                                              to_date=True,
                                               token_auth=True,
-                                              archive=True,
                                               ssl_verify=True)
 
         # Meetup options
@@ -315,12 +417,12 @@ class MeetupClient(HttpClient, RateLimitHandler):
     """Meetup API client.
 
     Client for fetching information from the Meetup server
-    using its REST API v3.
+    using its GraphQL API.
 
     :param api_token: OAuth2 token needed to access the API
     :param max_items: maximum number of items per request
     :param sleep_for_rate: sleep until rate limit is reset
-    :param min_rate_to_sleep: minimun rate needed to sleep until
+    :param min_rate_to_sleep: minimum rate needed to sleep until
          it will be reset
     :param sleep_time: time (in seconds) to sleep in case
         of connection problems
@@ -328,37 +430,26 @@ class MeetupClient(HttpClient, RateLimitHandler):
     :param from_archive: it tells whether to write/read the archive
     :param ssl_verify: enable/disable SSL verification
     """
-    EXTRA_STATUS_FORCELIST = [429]
+
     RCOMMENTS = 'comments'
-    REVENTS = 'events'
-    RRSVPS = 'rsvps'
+    RTICKETS = 'tickets'
 
-    PFIELDS = 'fields'
     PKEY_OAUTH2 = 'Authorization'
-    PORDER = 'order'
-    PPAGE = 'page'
-    PRESPONSE = 'response'
-    PSCROLL = 'scroll'
-    PSTATUS = 'status'
 
-    VEVENT_FIELDS = ['event_hosts', 'featured', 'group_topics',
-                     'plain_text_description', 'rsvpable', 'series']
-    VRSVP_FIELDS = ['attendance_status']
-    VRESPONSE = ['yes', 'no']
-    # FIXME: Add 'draft' status when the bug in the Meetup API gets fixed.
-    # More info in https://github.com/meetup/api/issues/260
-    VSTATUS = ['cancelled', 'upcoming', 'past', 'proposed', 'suggested']
-    VUPDATED = 'updated'
+    VPAST_EVENTS = "pastEvents"
+    VFUTURE_EVENTS = "upcomingEvents"
+    VEVENT_TYPES = [VPAST_EVENTS, VFUTURE_EVENTS]
+
+    HCONTENT_TYPE = 'Content-Type'
+    VCONTENT_TYPE = 'application/json'
 
     def __init__(self, api_token, max_items=MAX_ITEMS,
                  sleep_for_rate=False, min_rate_to_sleep=MIN_RATE_LIMIT, sleep_time=SLEEP_TIME,
-                 archive=None, from_archive=False, ssl_verify=True):
+                 ssl_verify=True):
         self.api_token = api_token
         self.max_items = max_items
 
-        super().__init__(MEETUP_API_URL, sleep_time=sleep_time,
-                         extra_status_forcelist=self.EXTRA_STATUS_FORCELIST,
-                         archive=archive, from_archive=from_archive, ssl_verify=ssl_verify)
+        super().__init__(MEETUP_API_URL, sleep_time=sleep_time, ssl_verify=ssl_verify)
         super().setup_rate_limit_handler(sleep_for_rate=sleep_for_rate, min_rate_to_sleep=min_rate_to_sleep)
 
     def calculate_time_to_reset(self):
@@ -367,68 +458,90 @@ class MeetupClient(HttpClient, RateLimitHandler):
         time_to_reset = 0 if self.rate_limit_reset_ts < 0 else self.rate_limit_reset_ts
         return time_to_reset
 
+    def event(self, event_id):
+        """Fetch a full event from the API"""
+
+        query = QUERY_EVENT_TEMPLATE % (event_id, QUERY_EVENT_FULL)
+        event = self._fetch(query)
+        return event['data']['event']
+
     def events(self, group, from_date=DEFAULT_DATETIME):
-        """Fetch the events pages of a given group."""
+        """
+        Fetch the events for a given group.
 
-        date = datetime_to_utc(from_date)
-        date = date.strftime("since:%Y-%m-%dT%H:%M:%S.000Z")
+        It is divided in nested two steps:
+        - Get from all the events the id and date.
+        - Fetch only the event information after a specific date.
+        """
 
-        resource = urijoin(group, self.REVENTS)
+        event_idx = 0
+        event_type = self.VEVENT_TYPES[event_idx]
+        cursor = 'null'
 
-        # Hack required due to Metup API does not support list
-        # values with the format `?param=value1&param=value2`.
-        # It only works with `?param=value1,value2`.
-        # Morever, urrlib3 encodes comma characters when values
-        # are given using params dict, which it doesn't work
-        # with Meetup, either.
-        fixed_params = '?' + self.PFIELDS + '=' + ','.join(self.VEVENT_FIELDS)
-        fixed_params += '&' + self.PSTATUS + '=' + ','.join(self.VSTATUS)
-        resource += fixed_params
+        while True:
+            cursor = cursor if cursor == 'null' else '"{}"'.format(cursor)
+            query = QUERY_GROUP_EVENTS_TEMPLATE % (group, event_type, self.max_items,
+                                                   cursor, QUERY_EVENT_DATE)
+            page = self._fetch(query)
+            if not page['data']['groupByUrlname']:
+                logger.error("Can't get meetup group: %s", group)
+                raise Exception("Can't get meetup group: %s" % group)
 
-        params = {
-            self.PORDER: self.VUPDATED,
-            self.PSCROLL: date,
-            self.PPAGE: self.max_items
-        }
+            events_page = page['data']['groupByUrlname'][event_type]
+            for node in events_page['edges']:
+                event = node['node']
+                date = datetime.strptime(event['dateTime'], '%Y-%m-%dT%H:%M%z')
+                if date > from_date:
+                    yield self.event(event['id'])
 
-        try:
-            for page in self._fetch(resource, params):
-                yield page
-        except requests.exceptions.HTTPError as error:
-            if error.response.status_code == 410:
-                msg = "Group is no longer accessible: {}".format(error)
-                raise RepositoryError(cause=msg)
+            if events_page['pageInfo']['hasNextPage']:
+                cursor = events_page['pageInfo']['endCursor']
+            elif event_idx < len(self.VEVENT_TYPES)-1:
+                event_idx += 1
+                event_type = self.VEVENT_TYPES[event_idx]
+                cursor = 'null'
             else:
-                raise error
+                break
 
-    def comments(self, group, event_id):
+    def comments(self, event_id):
         """Fetch the comments of a given event."""
 
-        resource = urijoin(group, self.REVENTS, event_id, self.RCOMMENTS)
+        do_fetch = True
+        ncomments = 0
 
-        params = {
-            self.PPAGE: self.max_items
-        }
+        while do_fetch:
+            comments_query = QUERY_EVENT_COMMENTS % (ncomments, self.max_items)
+            query = QUERY_EVENT_TEMPLATE % (event_id, comments_query)
 
-        for page in self._fetch(resource, params):
-            yield page
+            event = self._fetch(query)
+            comments_node = event['data']['event'][self.RCOMMENTS]
 
-    def rsvps(self, group, event_id):
-        """Fetch the rsvps of a given event."""
+            yield comments_node['edges']
 
-        resource = urijoin(group, self.REVENTS, event_id, self.RRSVPS)
+            ncomments += self.max_items
+            if ncomments >= comments_node['count']:
+                do_fetch = False
 
-        # Same hack that in 'events' method
-        fixed_params = '?' + self.PFIELDS + '=' + ','.join(self.VRSVP_FIELDS)
-        fixed_params += '&' + self.PRESPONSE + '=' + ','.join(self.VRESPONSE)
-        resource += fixed_params
+    def rsvps(self, event_id):
+        """Fetch the rsvps (tickets) of a given event."""
 
-        params = {
-            self.PPAGE: self.max_items
-        }
+        do_fetch = True
+        cursor = 'null'
 
-        for page in self._fetch(resource, params):
-            yield page
+        while do_fetch:
+            cursor = cursor if cursor == 'null' else '"{}"'.format(cursor)
+            tickets_query = QUERY_EVENT_TICKETS % (self.max_items, cursor)
+            query = QUERY_EVENT_TEMPLATE % (event_id, tickets_query)
+
+            event = self._fetch(query)
+            tickets_node = event['data']['event'][self.RTICKETS]
+
+            yield tickets_node['edges']
+
+            if tickets_node['pageInfo']['hasNextPage']:
+                cursor = tickets_node['pageInfo']['endCursor']
+            else:
+                do_fetch = False
 
     @staticmethod
     def sanitize_for_archive(url, headers, payload):
@@ -444,40 +557,26 @@ class MeetupClient(HttpClient, RateLimitHandler):
 
         return url, headers, payload
 
-    def _fetch(self, resource, params):
-        """Fetch a resource.
+    def _fetch(self, query):
+        """Fetch a resource using the query.
 
-        Method to fetch and to iterate over the contents of a
-        type of resource. The method returns a generator of
-        pages for that resource and parameters.
+        :param query: query to be transmitted
 
-        :param resource: type of the resource
-        :param params: parameters to filter
-
-        :returns: a generator of pages for the requeste resource
+        :returns: json result of the query
         """
-        url = urijoin(self.base_url, resource)
         headers = {
-            self.PKEY_OAUTH2: 'Bearer {}'.format(self.api_token)
+            self.PKEY_OAUTH2: 'Bearer {}'.format(self.api_token),
+            self.HCONTENT_TYPE: self.VCONTENT_TYPE
         }
 
-        do_fetch = True
+        logger.debug("Meetup client query: %s", str(query))
 
-        while do_fetch:
-            logger.debug("Meetup client calls resource: %s params: %s",
-                         resource, str(params))
+        if not self.from_archive:
+            self.sleep_for_rate_limit()
 
-            if not self.from_archive:
-                self.sleep_for_rate_limit()
+        r = self.fetch(url=self.base_url,
+                       payload=json.dumps({'query': query}),
+                       headers=headers,
+                       method=HttpClient.POST)
 
-            r = self.fetch(url, payload=params, headers=headers)
-
-            if not self.from_archive:
-                self.update_rate_limit(r)
-
-            yield r.text
-
-            if r.links and 'next' in r.links:
-                url = r.links['next']['url']
-            else:
-                do_fetch = False
+        return r.json()
