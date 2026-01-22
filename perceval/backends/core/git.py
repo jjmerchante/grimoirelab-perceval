@@ -286,7 +286,7 @@ class Git(Backend):
                     self.uri, self.gitpath)
         return self.parse_git_log_from_file(self.gitpath)
 
-    def _fetch_from_repo(self, from_date, to_date, branches, latest_items=False, no_update=False):
+    def _fetch_from_repo(self, from_date, to_date, branches, latest_items=False, no_update=False, with_patch_id=False):
         # When no latest items are set or the repository has not
         # been cloned use the default mode
         default_mode = not latest_items or not os.path.exists(self.gitpath)
@@ -294,13 +294,13 @@ class Git(Backend):
         repo = self._create_git_repository()
 
         if default_mode:
-            commits = self._fetch_commits_from_repo(repo, from_date, to_date, branches, no_update)
+            commits = self._fetch_commits_from_repo(repo, from_date, to_date, branches, no_update, with_patch_id)
         else:
             commits = self._fetch_newest_commits_from_repo(repo)
 
         return commits
 
-    def _fetch_commits_from_repo(self, repo, from_date, to_date, branches, no_update):
+    def _fetch_commits_from_repo(self, repo, from_date, to_date, branches, no_update, with_patch_id):
         if branches is None:
             branches_text = "all"
         elif len(branches) == 0:
@@ -326,7 +326,7 @@ class Git(Backend):
         if not no_update:
             repo.update()
 
-        gitlog = repo.log(from_date, to_date, branches)
+        gitlog = repo.log(from_date, to_date, branches, include_patch=with_patch_id)
         return self.parse_git_log_from_iter(gitlog)
 
     def _fetch_newest_commits_from_repo(self, repo):
@@ -571,6 +571,8 @@ class GitParser:
 
     EMPTY_LINE_PATTERN = r"^$"
 
+    PATCH_PATTERN = r"""^diff --git .*$"""
+
     # Compiled patterns
     GIT_COMMIT_REGEXP = re.compile(COMMIT_PATTERN, re.VERBOSE)
     GIT_HEADER_TRAILER_REGEXP = re.compile(HEADER_TRAILER_PATTERN, re.VERBOSE)
@@ -578,13 +580,15 @@ class GitParser:
     GIT_ACTION_REGEXP = re.compile(ACTION_PATTERN, re.VERBOSE)
     GIT_STATS_REGEXP = re.compile(STATS_PATTERN, re.VERBOSE)
     GIT_NEXT_STATE_REGEXP = re.compile(EMPTY_LINE_PATTERN, re.VERBOSE)
+    GIT_PATCH_PATTERN = re.compile(PATCH_PATTERN, re.VERBOSE)
 
     # Git parser status
     (INIT,
      COMMIT,
      HEADER,
      MESSAGE,
-     FILE) = range(5)
+     FILE,
+     PATCH) = range(6)
 
     # Git trailers
     TRAILERS = [
@@ -612,7 +616,8 @@ class GitParser:
             self.COMMIT: self._handle_commit,
             self.HEADER: self._handle_header,
             self.MESSAGE: self._handle_message,
-            self.FILE: self._handle_file
+            self.FILE: self._handle_file,
+            self.PATCH: self._handle_patch,
         }
 
     def parse(self):
@@ -657,6 +662,7 @@ class GitParser:
         self.commit = None
         self.commit_files = {}
         self.pending_files = {}
+        self.patch = ""
 
     def _handle_init(self, line):
         m = self.GIT_NEXT_STATE_REGEXP.match(line)
@@ -735,7 +741,7 @@ class GitParser:
     def _handle_file(self, line):
         m = self.GIT_NEXT_STATE_REGEXP.match(line)
         if m:
-            self.state = self.COMMIT
+            self.state = self.PATCH
             return True
 
         m = self.GIT_ACTION_REGEXP.match(line)
@@ -753,8 +759,48 @@ class GitParser:
         # No match case
         logger.debug("Invalid action format on line %s. Skipping.",
                      str(self.nline))
-        self.state = self.COMMIT
+        self.state = self.PATCH
         return False
+
+    def _handle_patch(self, line):
+        m = self.GIT_NEXT_STATE_REGEXP.match(line)
+        if m:
+            self._calculate_patch_id()
+            self.state = self.COMMIT
+            return True
+
+        m = self.GIT_COMMIT_REGEXP.match(line)
+        if m:
+            self._calculate_patch_id()
+            self.state = self.COMMIT
+            return False
+
+        # Concatenate patch lines
+        if self.patch:
+            self.patch += '\n'
+        self.patch += line
+        return True
+
+    def _calculate_patch_id(self):
+        if not self.patch:
+            return
+
+        process = subprocess.Popen(
+            ['git', 'patch-id', '--stable'],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+            errors='surrogatepass'
+        )
+        stdout, stderr = process.communicate(input=self.patch)
+        if process.returncode != 0:
+            logger.debug("Error calculating patch id on line %s: %s",
+                         str(self.nline), stderr.strip())
+            return
+        patch_id = stdout.split()[0]
+        self.commit['patch_id'] = patch_id
 
     def _handle_trailer(self, line):
         m = self.GIT_HEADER_TRAILER_REGEXP.match(line)
@@ -1174,7 +1220,7 @@ class GitRepository:
         logger.debug("Git rev-list fetched from %s repository (%s)",
                      self.uri, self.dirpath)
 
-    def log(self, from_date=None, to_date=None, branches=None, encoding='utf-8'):
+    def log(self, from_date=None, to_date=None, branches=None, encoding='utf-8', include_patch=False):
         """Read the commit log from the repository.
 
         The method returns the Git log of the repository using the
@@ -1197,6 +1243,7 @@ class GitRepository:
         :param to_date: fetch commits older than a specific date
         :param branches: names of branches to fetch from (default: None)
         :param encoding: encode the log using this format
+        :param include_patch: include patch data in the log
 
         :returns: a generator where each item is a line from the log
 
@@ -1229,6 +1276,10 @@ class GitRepository:
         else:
             branches = ['refs/heads/' + branch for branch in branches]
             cmd_log.extend(branches)
+
+        # if include_patch:
+        if True:
+            cmd_log.extend(['-p', '--full-diff'])
 
         for line in self._exec_nb(cmd_log, cwd=self.dirpath, env=self.gitenv):
             yield line
