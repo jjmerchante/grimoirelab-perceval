@@ -40,7 +40,7 @@ PHORGE_URL = 'http://example.com'
 PHORGE_API_URL = PHORGE_URL + '/api'
 PHORGE_API_ERROR_URL = PHORGE_API_URL + '/error'
 PHORGE_TASKS_URL = PHORGE_API_URL + '/maniphest.search'
-PHORGE_TRANSACTIONS_URL = PHORGE_API_URL + '/maniphest.gettasktransactions'
+PHORGE_TRANSACTIONS_URL = PHORGE_API_URL + '/transaction.search'
 PHORGE_PHIDS_URL = PHORGE_API_URL + '/phid.query'
 PHORGE_USERS_URL = PHORGE_API_URL + '/user.search'
 
@@ -60,8 +60,10 @@ def setup_http_server():
     tasks_body = read_file('data/phorge/phorge_tasks.json', 'rb')
     tasks_next_body = read_file('data/phorge/phorge_tasks_next.json', 'rb')
     tasks_empty_body = read_file('data/phorge/phorge_tasks_empty.json')
-    tasks_trans_body = read_file('data/phorge/phorge_transactions.json', 'rb')
-    tasks_trans_next_body = read_file('data/phorge/phorge_transactions_next.json', 'rb')
+    tasks_trans_t69_body = read_file('data/phorge/phorge_T69_transactions.json', 'rb')
+    tasks_trans_t73_body = read_file('data/phorge/phorge_T73_transactions.json', 'rb')
+    tasks_trans_t78_body = read_file('data/phorge/phorge_T78_transactions.json', 'rb')
+    tasks_trans_t296_body = read_file('data/phorge/phorge_T296_transactions.json', 'rb')
     users_body = read_file('data/phorge/phorge_users.json', 'rb')
     jane_body = read_file('data/phorge/phorge_user_jane.json', 'rb')
     janes_body = read_file('data/phorge/phorge_user_janesmith.json', 'rb')
@@ -101,10 +103,17 @@ def setup_http_server():
             else:
                 body = tasks_next_body
         elif uri == PHORGE_TRANSACTIONS_URL:
-            if 69 in params['ids']:
-                body = tasks_trans_body
+            object_id = params['objectIdentifier']
+            if object_id == 'T69':
+                body = tasks_trans_t69_body
+            elif object_id == 'T73':
+                body = tasks_trans_t73_body
+            elif object_id == 'T78':
+                body = tasks_trans_t78_body
+            elif object_id == 'T296':
+                body = tasks_trans_t296_body
             else:
-                body = tasks_trans_next_body
+                raise
         elif uri == PHORGE_USERS_URL:
             if len(params['constraints']['phids']) == 4:
                 body = users_body
@@ -223,10 +232,12 @@ class TestPhorgeBackend(unittest.TestCase):
         phorge = Phorge(PHORGE_URL, 'AAAA')
         tasks = [task for task in phorge.fetch(from_date=None)]
 
-        expected = [(69, 16, 'jdoe', 'jdoe', '1b4c15d26068efcae83cd920bcada6003d2c4a6c', 1462306027.0),
-                    (73, 20, 'jdoe', 'janesmith', '5487fc704f2d3c4e83ab0cd065512a181c1726cc', 1462464642.0),
-                    (78, 17, 'jdoe', None, 'fa971157c4d0155652f94b673866abd83b929b27', 1462792338.0),
-                    (296, 18, 'jane', 'jrae', 'e8fa3e4a4381d6fea3bcf5c848f599b87e7dc4a6', 1467196707.0)]
+        expected = [
+            (69, 9, 'jdoe', 'jdoe', '1b4c15d26068efcae83cd920bcada6003d2c4a6c', 1462306027.0),
+            (73, 9, 'jdoe', 'janesmith', '5487fc704f2d3c4e83ab0cd065512a181c1726cc', 1462464642.0),
+            (78, 9, 'jdoe', None, 'fa971157c4d0155652f94b673866abd83b929b27', 1462792338.0),
+            (296, 9, 'jane', 'jrae', 'e8fa3e4a4381d6fea3bcf5c848f599b87e7dc4a6', 1467196707.0)
+        ]
 
         self.assertEqual(len(tasks), len(expected))
 
@@ -251,49 +262,17 @@ class TestPhorgeBackend(unittest.TestCase):
 
         # Check some authors info on transactions
         trans = tasks[0]['data']['transactions']
-        self.assertEqual(trans[0]['authorData']['fields']['username'], 'jdoe')
-        self.assertEqual(trans[15]['authorData']['fields']['username'], 'jdoe')
+        self.assertEqual(trans[0]['authorData']['fields']['username'], 'jane')
+        self.assertEqual(trans[8]['authorData']['fields']['username'], 'jdoe')
 
-        # Check that subscribers data is included for core:subscribers type transactions
-        trans = tasks[0]['data']['transactions'][6]
-        self.assertEqual(trans['transactionType'], 'core:subscribers')
-        self.assertEqual(trans['oldValue'], [])
-        self.assertEqual(trans['oldValue'], trans['oldValue_data'])
-        self.assertEqual(len(trans['newValue']), len(trans['newValue_data']))
-        self.assertDictEqual(trans['newValue_data'][0], trans['authorData'])
-
-        # Check that project data is included for core:edge type transactions
-        trans = tasks[0]['data']['transactions'][7]
-        self.assertEqual(trans['transactionType'], 'core:edge')
-        self.assertEqual(trans['newValue_data'][0]['phid'],
-                         trans['newValue'][trans['newValue_data'][0]['phid']]['dst'])
-
-        # Check that policy data is include for core:edit-policy type transactions
+        # Check that operation data is included for project operations
         trans = tasks[0]['data']['transactions'][8]
-        self.assertEqual(trans['transactionType'], 'core:edit-policy')
-        self.assertIsNotNone(trans['newValue_data'])
-        self.assertIsNone(trans['oldValue_data'])
-
-        # Check that policy data is include for core:view-policy type transactions
-        trans = tasks[0]['data']['transactions'][9]
-        self.assertEqual(trans['transactionType'], 'core:view-policy')
-        self.assertIsNotNone(trans['newValue_data'])
-        self.assertIsNone(trans['oldValue_data'])
-
-        # Check that reassign data is include for reassign type transactions
-        trans = tasks[0]['data']['transactions'][13]
-        self.assertEqual(trans['transactionType'], 'reassign')
-        self.assertDictEqual(trans['newValue_data'], trans['authorData'])
-        self.assertIsNone(trans['oldValue_data'])
-
-        # Check authors that weren't found on the server: jsmith
-        trans = tasks[1]['data']['transactions']
-        self.assertEqual(trans[3]['authorData'], None)
+        self.assertEqual(trans['type'], 'projects')
+        self.assertIsNotNone(trans['fields']['operations'][0]['operation_data'])
 
         trans = tasks[3]['data']['transactions']
-        self.assertEqual(trans[0]['authorData']['fields']['username'], 'jdoe')
-        self.assertEqual(trans[15]['authorData']['fields']['username'], 'jane')
-        self.assertEqual(trans[16]['authorData']['name'], 'Herald')
+        self.assertEqual(trans[0]['authorData']['fields']['username'], 'jane')
+        self.assertEqual(trans[8]['authorData']['fields']['username'], 'jdoe')
 
         # Check some info about projects
         prjs = tasks[0]['data']['projects']
@@ -323,7 +302,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'ids': [69, 73, 78]
+                    'objectIdentifier': 'T69'
                 }
             },
             {
@@ -339,23 +318,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-PROJ-zi2ndtoy3fh5pnbqzfdo']
-                }
-            },
-            {
-                '__conduit__': ['True'],
-                'output': ['json'],
-                'params': {
-                    '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-PROJ-2qnt6thbrd7qnx5bitzy']
-                }
-            },
-            {
-                '__conduit__': ['True'],
-                'output': ['json'],
-                'params': {
-                    '__conduit__': {'token': 'AAAA'},
-                    'constraints': {'phids': ['PHID-USER-bjxhrstz5fb5gkrojmev']}
+                    'constraints': {'phids': ['PHID-USER-ojtcpympsmwenszuef7p']}
                 }
             },
             {
@@ -364,6 +327,14 @@ class TestPhorgeBackend(unittest.TestCase):
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
                     'constraints': {'phids': ['PHID-USER-mjr7pnwpg6slsnjcqki7']}
+                }
+            },
+            {
+                '__conduit__': ['True'],
+                'output': ['json'],
+                'params': {
+                    '__conduit__': {'token': 'AAAA'},
+                    'phids': ['PHID-PROJ-2qnt6thbrd7qnx5bitzy']
                 }
             },
             {
@@ -382,7 +353,15 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'ids': [296]
+                    'objectIdentifier': 'T73'
+                }
+            },
+            {
+                '__conduit__': ['True'],
+                'output': ['json'],
+                'params': {
+                    '__conduit__': {'token': 'AAAA'},
+                    'objectIdentifier': 'T78'
                 }
             },
             {
@@ -398,7 +377,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'constraints': {'phids': ['PHID-USER-ojtcpympsmwenszuef7p']}
+                    'phids': ['PHID-PROJ-zi2ndtoy3fh5pnbqzfdo']
                 }
             },
             {
@@ -406,7 +385,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-APPS-PhabricatorHeraldApplication']
+                    'objectIdentifier': 'T296'
                 }
             }
         ]
@@ -456,20 +435,17 @@ class TestPhorgeBackend(unittest.TestCase):
         self.assertEqual(task['data']['id'], 296)
         self.assertEqual(task['data']['fields']['authorData']['fields']['username'], 'jane')
         self.assertEqual(task['data']['fields']['ownerData']['fields']['username'], 'jrae')
-        self.assertEqual(len(task['data']['transactions']), 18)
+        self.assertEqual(len(task['data']['transactions']), 9)
         self.assertEqual(task['uuid'], 'e8fa3e4a4381d6fea3bcf5c848f599b87e7dc4a6')
         self.assertEqual(task['origin'], PHORGE_URL)
         self.assertEqual(task['updated_on'], 1467196707.0)
         self.assertEqual(task['category'], 'task')
         self.assertEqual(task['tag'], PHORGE_URL)
 
-        # Check subscribers transaction type
-        trans = task['data']['transactions'][4]
-        self.assertEqual(trans['newValue_data'][0]['fields']['username'], 'jdoe')
-
-        # Check reassign transaction type
-        trans = task['data']['transactions'][11]
-        self.assertEqual(trans['newValue_data']['fields']['username'], 'jdoe')
+        trans = task['data']['transactions'][8]
+        self.assertEqual(trans['type'], 'projects')
+        self.assertEqual(trans['fields']['operations'][0]['operation_data']['phid'],
+                         'PHID-PROJ-2qnt6thbrd7qnx5bitzy')
 
         # Check requests
         expected = [
@@ -488,7 +464,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'ids': [296]
+                    'constraints': {'phids': ['PHID-USER-ojtcpympsmwenszuef7p']}
                 }
             },
             {
@@ -496,7 +472,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'constraints': {'phids': ['PHID-USER-2uk52xorcqb6sjvp467y']}
+                    'constraints': {'phids': ['PHID-USER-pr5fcxy4xk5ofqsfqcfc']}
                 }
             },
             {
@@ -512,7 +488,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'constraints': {'phids': ['PHID-USER-ojtcpympsmwenszuef7p']}
+                    'phids': ['PHID-PROJ-2qnt6thbrd7qnx5bitzy']
                 }
             },
             {
@@ -520,7 +496,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-APPS-PhabricatorHeraldApplication']
+                    'objectIdentifier': 'T296'
                 }
             },
             {
@@ -528,15 +504,15 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'constraints': {'phids': ['PHID-USER-pr5fcxy4xk5ofqsfqcfc']}
+                    'constraints': {'phids': ['PHID-USER-mjr7pnwpg6slsnjcqki7']}
                 }
             },
             {
                 '__conduit__': ['True'],
                 'output': ['json'],
                 'params': {
-                    "__conduit__": {"token": "AAAA"},
-                    "phids": ["PHID-PROJ-2qnt6thbrd7qnx5bitzy"]
+                    '__conduit__': {'token': 'AAAA'},
+                    'constraints': {'phids': ['PHID-USER-2uk52xorcqb6sjvp467y']}
                 }
             }
         ]
@@ -555,9 +531,11 @@ class TestPhorgeBackend(unittest.TestCase):
         phorge = Phorge(PHORGE_URL, 'AAAA', blacklist_ids=[296])
         tasks = [task for task in phorge.fetch(from_date=None)]
 
-        expected = [(69, 16, 'jdoe', 'jdoe', '1b4c15d26068efcae83cd920bcada6003d2c4a6c', 1462306027.0),
-                    (73, 20, 'jdoe', 'janesmith', '5487fc704f2d3c4e83ab0cd065512a181c1726cc', 1462464642.0),
-                    (78, 17, 'jdoe', None, 'fa971157c4d0155652f94b673866abd83b929b27', 1462792338.0)]
+        expected = [
+            (69, 9, 'jdoe', 'jdoe', '1b4c15d26068efcae83cd920bcada6003d2c4a6c', 1462306027.0),
+            (73, 9, 'jdoe', 'janesmith', '5487fc704f2d3c4e83ab0cd065512a181c1726cc', 1462464642.0),
+            (78, 9, 'jdoe', None, 'fa971157c4d0155652f94b673866abd83b929b27', 1462792338.0)
+        ]
 
         self.assertEqual(len(tasks), len(expected))
 
@@ -582,44 +560,12 @@ class TestPhorgeBackend(unittest.TestCase):
 
         # Check some authors info on transactions
         trans = tasks[0]['data']['transactions']
-        self.assertEqual(trans[0]['authorData']['fields']['username'], 'jdoe')
-        self.assertEqual(trans[15]['authorData']['fields']['username'], 'jdoe')
+        self.assertEqual(trans[0]['authorData']['fields']['username'], 'jane')
+        self.assertEqual(trans[8]['authorData']['fields']['username'], 'jdoe')
 
-        # Check that subscribers data is included for core:subscribers type transactions
-        trans = tasks[0]['data']['transactions'][6]
-        self.assertEqual(trans['transactionType'], 'core:subscribers')
-        self.assertEqual(trans['oldValue'], [])
-        self.assertEqual(trans['oldValue'], trans['oldValue_data'])
-        self.assertEqual(len(trans['newValue']), len(trans['newValue_data']))
-        self.assertDictEqual(trans['newValue_data'][0], trans['authorData'])
-
-        # Check that project data is included for core:edge type transactions
-        trans = tasks[0]['data']['transactions'][7]
-        self.assertEqual(trans['transactionType'], 'core:edge')
-        self.assertEqual(trans['newValue_data'][0]['phid'],
-                         trans['newValue'][trans['newValue_data'][0]['phid']]['dst'])
-
-        # Check that policy data is include for core:edit-policy type transactions
         trans = tasks[0]['data']['transactions'][8]
-        self.assertEqual(trans['transactionType'], 'core:edit-policy')
-        self.assertIsNotNone(trans['newValue_data'])
-        self.assertIsNone(trans['oldValue_data'])
-
-        # Check that policy data is include for core:view-policy type transactions
-        trans = tasks[0]['data']['transactions'][9]
-        self.assertEqual(trans['transactionType'], 'core:view-policy')
-        self.assertIsNotNone(trans['newValue_data'])
-        self.assertIsNone(trans['oldValue_data'])
-
-        # Check that reassign data is include for reassign type transactions
-        trans = tasks[0]['data']['transactions'][13]
-        self.assertEqual(trans['transactionType'], 'reassign')
-        self.assertDictEqual(trans['newValue_data'], trans['authorData'])
-        self.assertIsNone(trans['oldValue_data'])
-
-        # Check authors that weren't found on the server: jsmith
-        trans = tasks[1]['data']['transactions']
-        self.assertEqual(trans[3]['authorData'], None)
+        self.assertEqual(trans['type'], 'projects')
+        self.assertIsNotNone(trans['fields']['operations'][0]['operation_data'])
 
         # Check some info about projects
         prjs = tasks[0]['data']['projects']
@@ -642,7 +588,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'ids': [69, 73, 78]
+                    'objectIdentifier': 'T69'
                 }
             },
             {
@@ -658,23 +604,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-PROJ-zi2ndtoy3fh5pnbqzfdo']
-                }
-            },
-            {
-                '__conduit__': ['True'],
-                'output': ['json'],
-                'params': {
-                    '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-PROJ-2qnt6thbrd7qnx5bitzy']
-                }
-            },
-            {
-                '__conduit__': ['True'],
-                'output': ['json'],
-                'params': {
-                    '__conduit__': {'token': 'AAAA'},
-                    'constraints': {'phids': ['PHID-USER-bjxhrstz5fb5gkrojmev']}
+                    'constraints': {'phids': ['PHID-USER-ojtcpympsmwenszuef7p']}
                 }
             },
             {
@@ -683,6 +613,14 @@ class TestPhorgeBackend(unittest.TestCase):
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
                     'constraints': {'phids': ['PHID-USER-mjr7pnwpg6slsnjcqki7']}
+                }
+            },
+            {
+                '__conduit__': ['True'],
+                'output': ['json'],
+                'params': {
+                    '__conduit__': {'token': 'AAAA'},
+                    'phids': ['PHID-PROJ-2qnt6thbrd7qnx5bitzy']
                 }
             },
             {
@@ -701,7 +639,15 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'constraints': {'phids': ['PHID-USER-ojtcpympsmwenszuef7p']}
+                    'objectIdentifier': 'T73'
+                }
+            },
+            {
+                '__conduit__': ['True'],
+                'output': ['json'],
+                'params': {
+                    '__conduit__': {'token': 'AAAA'},
+                    'objectIdentifier': 'T78'
                 }
             }
         ]
@@ -768,14 +714,12 @@ class TestPhorgeBackend(unittest.TestCase):
     def test_parse_tasks_transactions(self):
         """Test if it parses a tasks transactions stream"""
 
-        raw_json = read_file('data/phorge/phorge_transactions.json')
+        raw_json = read_file('data/phorge/phorge_T69_transactions.json')
 
         results = Phorge.parse_tasks_transactions(raw_json)
 
-        self.assertEqual(len(results), 3)
-        self.assertEqual(len(results['69']), 16)
-        self.assertEqual(len(results['73']), 20)
-        self.assertEqual(len(results['78']), 17)
+        self.assertEqual(len(results['data']), 9)
+        self.assertEqual(results['cursor']['after'], None)
 
     def test_parse_users(self):
         """Test if it parses a users stream"""
@@ -920,7 +864,9 @@ class TestConduitClient(unittest.TestCase):
         http_requests = setup_http_server()
 
         client = ConduitClient(PHORGE_URL, 'aaaa')
-        _ = client.transactions(69, 73, 78)
+        _ = client.transactions(69)
+        _ = client.transactions(73)
+        _ = client.transactions(78)
 
         expected = [
             {
@@ -928,7 +874,23 @@ class TestConduitClient(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'aaaa'},
-                    'ids': [69, 73, 78]
+                    'objectIdentifier': 'T69'
+                }
+            },
+            {
+                '__conduit__': ['True'],
+                'output': ['json'],
+                'params': {
+                    '__conduit__': {'token': 'aaaa'},
+                    'objectIdentifier': 'T73'
+                }
+            },
+            {
+                '__conduit__': ['True'],
+                'output': ['json'],
+                'params': {
+                    '__conduit__': {'token': 'aaaa'},
+                    'objectIdentifier': 'T78'
                 }
             }
         ]

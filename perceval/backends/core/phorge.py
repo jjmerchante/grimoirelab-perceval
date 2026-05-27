@@ -245,13 +245,9 @@ class Phorge(Backend):
             if not tasks:
                 break
 
-            tasks_ids = [t['id'] for t in tasks]
-            tasks_trans = self.__fetch_and_parse_tasks_transactions(*tasks_ids)
-
             for task in tasks:
-                # Task check point
-
                 tid = str(task['id'])
+
                 author_id = task['fields']['authorPHID']
                 owner_id = task['fields']['ownerPHID']
 
@@ -263,9 +259,9 @@ class Phorge(Backend):
                 project_ids = task['attachments']['projects']['projectPHIDs']
                 task_projects = [self.__get_or_fetch_project(project_id)
                                  for project_id in project_ids]
-
-                task['transactions'] = tasks_trans[tid]
                 task['projects'] = task_projects
+
+                task['transactions'] = self._fetch_task_transactions(tid)
 
                 yield task
 
@@ -306,117 +302,29 @@ class Phorge(Backend):
         self._projects[project_id] = project
         return project
 
-    def __fetch_and_parse_tasks_transactions(self, *tasks_ids):
-        logger.debug("Fetching and parsing tasks transactions")
+    def _fetch_task_transactions(self, task_id):
+        """Fetch transactions for a task."""
 
-        raw_json = self.client.transactions(*tasks_ids)
-        tasks_trans = self.parse_tasks_transactions(raw_json)
+        transactions = self.client.transactions(task_id)
 
-        for trans in tasks_trans.values():
-            for tt in trans:
-                author_id = tt['authorPHID']
-                author = self.__get_or_fetch_user(author_id)
-                tt['authorData'] = author
+        for transaction in transactions:
+            author_id = transaction['authorPHID']
+            transaction['authorData'] = self.__get_or_fetch_user(author_id)
 
-                if tt['transactionType'] == 'reassign':
-                    tt['newValue_data'] = self.__resolve_reassign_id(tt['newValue'])
-                    tt['oldValue_data'] = self.__resolve_reassign_id(tt['oldValue'])
+            self.__resolve_operations_ids(transaction)
 
-                if tt['transactionType'] == 'core:columns':
-                    tt['newValue'] = self.__resolve_board_ids(tt['newValue'])
-                    tt['oldValue'] = self.__resolve_board_ids(tt['oldValue'])
+        return transactions
 
-                if tt['transactionType'] == 'core:subscribers':
-                    tt['newValue_data'] = self.__resolve_subsribers_ids(tt['newValue'])
-                    tt['oldValue_data'] = self.__resolve_subsribers_ids(tt['oldValue'])
-
-                if tt['transactionType'] in ['core:edit-policy', 'core:view-policy']:
-                    tt['newValue_data'] = self.__resolve_policy_id(tt['newValue'])
-                    tt['oldValue_data'] = self.__resolve_policy_id(tt['oldValue'])
-
-                if tt['transactionType'] == 'core:edge':
-                    tt['oldValue_data'] = self.__resolve_project_ids(tt['oldValue'])
-                    tt['newValue_data'] = self.__resolve_project_ids(tt['newValue'])
-
-        return tasks_trans
-
-    def __resolve_reassign_id(self, value):
-        if not value:
-            return value
-
-        resolved = self.__get_or_fetch_user(value)
-        return resolved
-
-    def __resolve_policy_id(self, value):
-        if not value:
-            return value
-
-        if value.startswith('PHID-PROJ'):
-            resolved = self.__get_or_fetch_project(value)
-        else:
-            resolved = value
-
-        return resolved
-
-    def __resolve_board_ids(self, lst):
-        if not lst:
-            return lst
-
-        for e in lst:
-            e['boardPHID_data'] = self.__get_or_fetch_project(e['boardPHID'])
-
-        return lst
-
-    def __resolve_subsribers_ids(self, lst):
-        if not lst:
-            return lst
-
-        resolved_lst = []
-        for e in lst:
-            resolved = e
-            if not e:
+    def __resolve_operations_ids(self, transaction):
+        operations = transaction.get('fields', {}).get('operations', [])
+        for op in operations:
+            if 'phid' not in op:
                 continue
-            elif e.startswith('PHID-PROJ'):
-                resolved = self.__get_or_fetch_project(e)
-            elif e.startswith('PHID-USER'):
-                resolved = self.__get_or_fetch_user(e)
-
-            resolved_lst.append(resolved)
-
-        return resolved_lst
-
-    def __resolve_project_ids(self, obj):
-        if not obj:
-            return obj
-
-        if isinstance(obj, dict):
-            obj = self.__resolve_project_ids_from_dict(obj)
-        elif isinstance(obj, list):
-            obj = self.__resolve_project_ids_from_list(obj)
-
-        return obj
-
-    def __resolve_project_ids_from_dict(self, dct):
-        projects = []
-
-        for key in dct.keys():
-            content = dct.get(key)
-
-            if 'dst' in content and content['dst'] and content['dst'].startswith('PHID-PROJ'):
-                project_info = self.__get_or_fetch_project(content['dst'])
-                projects.append(project_info)
-
-        return projects
-
-    def __resolve_project_ids_from_list(self, lst):
-        projects = []
-
-        for e in lst:
-            if e.startswith('PHID-PROJ'):
-                project_info = self.__get_or_fetch_project(e)
-                projects.append(project_info)
-
-        return projects
+            phid = op['phid']
+            if phid.startswith('PHID-PROJ'):
+                op['operation_data'] = self.__get_or_fetch_project(phid)
+            elif phid.startswith('PHID-USER'):
+                op['operation_data'] = self.__get_or_fetch_user(phid)
 
     def __fetch_and_parse_users(self, *users_ids):
         logger.debug("Fetching and parsing users data")
@@ -467,13 +375,14 @@ class ConduitClient(HttpClient):
 
     # Methods
     MANIPHEST_TASKS = 'maniphest.search'
-    MANIPHEST_TRANSACTIONS = 'maniphest.gettasktransactions'
+    TRANSACTIONS_SEARCH = 'transaction.search'
     PHORGE_PHIDS = 'phid.query'
     PHORGE_USERS = 'user.search'
 
     PAFTER = 'after'
     PATTACHMENTS = 'attachments'
     PCONSTRAINTS = 'constraints'
+    POBJECT_IDENTIFIER = 'objectIdentifier'
     PHIDS = 'phids'
     PIDS = 'ids'
     PPROJECTS = 'projects'
@@ -524,18 +433,28 @@ class ConduitClient(HttpClient):
                 break
             params[self.PAFTER] = after
 
-    def transactions(self, *phids):
-        """Retrieve tasks transactions.
+    def transactions(self, task_id):
+        """Retrieve transactions for a task.
 
-        :param phids: list of tasks identifiers
+        :param task_id: task integer identifier
         """
         params = {
-            self.PIDS: phids
+            self.POBJECT_IDENTIFIER: 'T' + str(task_id),
         }
 
-        response = self._call(self.MANIPHEST_TRANSACTIONS, params)
+        transactions = []
+        while True:
+            response = self._call(self.TRANSACTIONS_SEARCH, params)
+            payload = json.loads(response)
+            data = payload.get('result', {}).get('data', [])
+            transactions.extend(data)
 
-        return response
+            after = payload.get('result', {}).get('cursor', {}).get(self.PAFTER)
+            if not after:
+                break
+            params[self.PAFTER] = after
+
+        return transactions
 
     def users(self, *phids):
         """Retrieve users.
