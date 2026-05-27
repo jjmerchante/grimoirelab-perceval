@@ -1,18 +1,41 @@
 {
     "error_code": null,
     "error_info": null,
-    "result": [
-        {
-            "image": "http://example.com/file/data/k",
-            "phid": "PHID-USER-mjr7pnwpg6slsnjcqki7",
-            "realName": "Jane Smith",
-            "roles": [
-                "verified",
-                "approved",
-                "activated"
-            ],
-            "uri": "http://example.com/p/janesmith/",
-            "userName": "janesmith"
+    "result": {
+        "data": [
+            {
+                "id": 124,
+                "type": "USER",
+                "phid": "PHID-USER-mjr7pnwpg6slsnjcqki7",
+                "fields": {
+                    "username": "janesmith",
+                    "realName": "Jane Smith",
+                    "mediawikiUsername": null,
+                    "roles": [
+                        "verified",
+                        "approved",
+                        "activated"
+                    ],
+                    "dateCreated": 1416448270,
+                    "dateModified": 1579127990,
+                    "policy": {
+                        "view": "public",
+                        "edit": "admin"
+                    },
+                    "custom.irc_nick": null
+                },
+                "attachments": {}
+            }
+        ],
+        "maps": {},
+        "query": {
+            "queryKey": null
+        },
+        "cursor": {
+            "limit": 100,
+            "after": null,
+            "before": null,
+            "order": null
         }
-    ]
+    }
 }

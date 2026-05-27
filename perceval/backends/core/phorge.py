@@ -209,7 +209,7 @@ class Phorge(Backend):
         """
         results = json.loads(raw_json)
 
-        users = results['result']
+        users = results['result']['data']
         for u in users:
             yield u
 
@@ -469,7 +469,7 @@ class ConduitClient(HttpClient):
     MANIPHEST_TASKS = 'maniphest.search'
     MANIPHEST_TRANSACTIONS = 'maniphest.gettasktransactions'
     PHORGE_PHIDS = 'phid.query'
-    PHORGE_USERS = 'user.query'
+    PHORGE_USERS = 'user.search'
 
     PAFTER = 'after'
     PATTACHMENTS = 'attachments'
@@ -543,7 +543,9 @@ class ConduitClient(HttpClient):
         :params phids: list of users identifiers
         """
         params = {
-            self.PHIDS: phids
+            self.PCONSTRAINTS: {
+                self.PHIDS: phids
+            }
         }
 
         response = self._call(self.PHORGE_USERS, params)

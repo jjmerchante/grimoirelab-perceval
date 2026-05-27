@@ -1,56 +1,112 @@
 {
     "error_code": null,
     "error_info": null,
-    "result": [
-        {
-            "image": "http://example.com/file/data/6",
-            "phid": "PHID-USER-pr5fcxy4xk5ofqsfqcfc",
-            "realName": "Jane Rae",
-            "roles": [
-                "verified",
-                "approved",
-                "activated"
-            ],
-            "uri": "http://example.com/p/jrae/",
-            "userName": "jrae"
+    "result": {
+        "data": [
+            {
+                "id": 126,
+                "type": "USER",
+                "phid": "PHID-USER-pr5fcxy4xk5ofqsfqcfc",
+                "fields": {
+                    "username": "jrae",
+                    "realName": "Jane Rae",
+                    "mediawikiUsername": null,
+                    "roles": [
+                        "verified",
+                        "approved",
+                        "activated"
+                    ],
+                    "dateCreated": 1416448270,
+                    "dateModified": 1579127990,
+                    "policy": {
+                        "view": "public",
+                        "edit": "admin"
+                    },
+                    "custom.irc_nick": null
+                },
+                "attachments": {}
+            },
+            {
+                "id": 127,
+                "type": "USER",
+                "phid": "PHID-USER-bjxhrstz5fb5gkrojmev",
+                "fields": {
+                    "username": "jsmith",
+                    "realName": "John Smith",
+                    "mediawikiUsername": null,
+                    "roles": [
+                        "verified",
+                        "approved",
+                        "activated"
+                    ],
+                    "dateCreated": 1416448270,
+                    "dateModified": 1579127990,
+                    "policy": {
+                        "view": "public",
+                        "edit": "admin"
+                    },
+                    "custom.irc_nick": null
+                },
+                "attachments": {}
+            },
+            {
+                "id": 125,
+                "type": "USER",
+                "phid": "PHID-USER-2uk52xorcqb6sjvp467y",
+                "fields": {
+                    "username": "jdoe",
+                    "realName": "John Doe",
+                    "mediawikiUsername": null,
+                    "roles": [
+                        "admin",
+                        "verified",
+                        "approved",
+                        "activated"
+                    ],
+                    "dateCreated": 1416448270,
+                    "dateModified": 1579127990,
+                    "policy": {
+                        "view": "public",
+                        "edit": "admin"
+                    },
+                    "custom.irc_nick": null
+                },
+                "attachments": {}
+            },
+            {
+                "id": 123,
+                "type": "USER",
+                "phid": "PHID-USER-ojtcpympsmwenszuef7p",
+                "fields": {
+                    "username": "jane",
+                    "realName": "Jane Doe",
+                    "mediawikiUsername": null,
+                    "roles": [
+                        "admin",
+                        "verified",
+                        "approved",
+                        "activated"
+                    ],
+                    "dateCreated": 1416448270,
+                    "dateModified": 1579127990,
+                    "policy": {
+                        "view": "public",
+                        "edit": "admin"
+                    },
+                    "custom.irc_nick": null
+                },
+                "attachments": {}
+            }
+        ],
+        "maps": {},
+        "query": {
+            "queryKey": null
         },
-        {
-            "image": "http://example.com/file/data/d",
-            "phid": "PHID-USER-bjxhrstz5fb5gkrojmev",
-            "realName": "John Smith",
-            "roles": [
-                "verified",
-                "approved",
-                "activated"
-            ],
-            "uri": "http://example.com/p/jsmith/",
-            "userName": "jsmith"
-        },
-        {
-            "image": "http://example.com/file/data/o",
-            "phid": "PHID-USER-2uk52xorcqb6sjvp467y",
-            "realName": "John Doe",
-            "roles": [
-                "admin",
-                "verified",
-                "approved",
-                "activated"
-            ],
-            "uri": "http://example.com/p/jdoe/",
-            "userName": "jdoe"
-        },
-        {
-            "image": "http://example.com/file/data/h",
-            "phid": "PHID-USER-ojtcpympsmwenszuef7p",
-            "realName": "Jane Doe",
-            "roles": [
-                "admin",
-                "verified",
-                "approved",
-                "activated"
-            ],
-            "uri": "http://example.com/p/jane/",
-            "userName": "jane"
+        "cursor": {
+            "limit": 100,
+            "after": null,
+            "before": null,
+            "order": null
         }
-    ]
+    }
 }

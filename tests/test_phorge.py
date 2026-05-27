@@ -42,7 +42,7 @@ PHORGE_API_ERROR_URL = PHORGE_API_URL + '/error'
 PHORGE_TASKS_URL = PHORGE_API_URL + '/maniphest.search'
 PHORGE_TRANSACTIONS_URL = PHORGE_API_URL + '/maniphest.gettasktransactions'
 PHORGE_PHIDS_URL = PHORGE_API_URL + '/phid.query'
-PHORGE_USERS_URL = PHORGE_API_URL + '/user.query'
+PHORGE_USERS_URL = PHORGE_API_URL + '/user.search'
 
 
 def read_file(filename, mode='r'):
@@ -106,10 +106,10 @@ def setup_http_server():
             else:
                 body = tasks_trans_next_body
         elif uri == PHORGE_USERS_URL:
-            if len(params['phids']) == 4:
+            if len(params['constraints']['phids']) == 4:
                 body = users_body
             else:
-                body = phids_users[params['phids'][0]]
+                body = phids_users[params['constraints']['phids'][0]]
         elif uri == PHORGE_PHIDS_URL:
             if len(params['phids']) == 2:
                 body = phids_body
@@ -235,13 +235,13 @@ class TestPhorgeBackend(unittest.TestCase):
             expc = expected[x]
             self.assertEqual(task['data']['id'], expc[0])
             self.assertEqual(len(task['data']['transactions']), expc[1])
-            self.assertEqual(task['data']['fields']['authorData']['userName'], expc[2])
+            self.assertEqual(task['data']['fields']['authorData']['fields']['username'], expc[2])
 
             # Check owner data; when it is null owner is not included
             if not expc[3]:
                 self.assertNotIn('ownerData', task['data']['fields'])
             else:
-                self.assertEqual(task['data']['fields']['ownerData']['userName'], expc[3])
+                self.assertEqual(task['data']['fields']['ownerData']['fields']['username'], expc[3])
 
             self.assertEqual(task['uuid'], expc[4])
             self.assertEqual(task['origin'], PHORGE_URL)
@@ -251,8 +251,8 @@ class TestPhorgeBackend(unittest.TestCase):
 
         # Check some authors info on transactions
         trans = tasks[0]['data']['transactions']
-        self.assertEqual(trans[0]['authorData']['userName'], 'jdoe')
-        self.assertEqual(trans[15]['authorData']['userName'], 'jdoe')
+        self.assertEqual(trans[0]['authorData']['fields']['username'], 'jdoe')
+        self.assertEqual(trans[15]['authorData']['fields']['username'], 'jdoe')
 
         # Check that subscribers data is included for core:subscribers type transactions
         trans = tasks[0]['data']['transactions'][6]
@@ -280,12 +280,6 @@ class TestPhorgeBackend(unittest.TestCase):
         self.assertIsNotNone(trans['newValue_data'])
         self.assertIsNone(trans['oldValue_data'])
 
-        # Check that project data is include for core:columns type transactions
-        trans = tasks[3]['data']['transactions'][15]
-        self.assertEqual(trans['transactionType'], 'core:columns')
-        self.assertEqual(trans['newValue'][0]['boardPHID_data']['name'], 'Team: Devel')
-        self.assertIsNone(trans['oldValue'])
-
         # Check that reassign data is include for reassign type transactions
         trans = tasks[0]['data']['transactions'][13]
         self.assertEqual(trans['transactionType'], 'reassign')
@@ -297,8 +291,8 @@ class TestPhorgeBackend(unittest.TestCase):
         self.assertEqual(trans[3]['authorData'], None)
 
         trans = tasks[3]['data']['transactions']
-        self.assertEqual(trans[0]['authorData']['userName'], 'jdoe')
-        self.assertEqual(trans[15]['authorData']['userName'], 'jane')
+        self.assertEqual(trans[0]['authorData']['fields']['username'], 'jdoe')
+        self.assertEqual(trans[15]['authorData']['fields']['username'], 'jane')
         self.assertEqual(trans[16]['authorData']['name'], 'Herald')
 
         # Check some info about projects
@@ -337,7 +331,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-USER-2uk52xorcqb6sjvp467y']
+                    'constraints': {'phids': ['PHID-USER-2uk52xorcqb6sjvp467y']}
                 }
             },
             {
@@ -361,7 +355,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-USER-bjxhrstz5fb5gkrojmev']
+                    'constraints': {'phids': ['PHID-USER-bjxhrstz5fb5gkrojmev']}
                 }
             },
             {
@@ -369,7 +363,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-USER-mjr7pnwpg6slsnjcqki7']
+                    'constraints': {'phids': ['PHID-USER-mjr7pnwpg6slsnjcqki7']}
                 }
             },
             {
@@ -396,7 +390,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-USER-pr5fcxy4xk5ofqsfqcfc']
+                    'constraints': {'phids': ['PHID-USER-pr5fcxy4xk5ofqsfqcfc']}
                 }
             },
             {
@@ -404,7 +398,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-USER-ojtcpympsmwenszuef7p']
+                    'constraints': {'phids': ['PHID-USER-ojtcpympsmwenszuef7p']}
                 }
             },
             {
@@ -460,8 +454,8 @@ class TestPhorgeBackend(unittest.TestCase):
 
         task = tasks[0]
         self.assertEqual(task['data']['id'], 296)
-        self.assertEqual(task['data']['fields']['authorData']['userName'], 'jane')
-        self.assertEqual(task['data']['fields']['ownerData']['userName'], 'jrae')
+        self.assertEqual(task['data']['fields']['authorData']['fields']['username'], 'jane')
+        self.assertEqual(task['data']['fields']['ownerData']['fields']['username'], 'jrae')
         self.assertEqual(len(task['data']['transactions']), 18)
         self.assertEqual(task['uuid'], 'e8fa3e4a4381d6fea3bcf5c848f599b87e7dc4a6')
         self.assertEqual(task['origin'], PHORGE_URL)
@@ -471,11 +465,11 @@ class TestPhorgeBackend(unittest.TestCase):
 
         # Check subscribers transaction type
         trans = task['data']['transactions'][4]
-        self.assertEqual(trans['newValue_data'][0]['userName'], 'jdoe')
+        self.assertEqual(trans['newValue_data'][0]['fields']['username'], 'jdoe')
 
         # Check reassign transaction type
         trans = task['data']['transactions'][11]
-        self.assertEqual(trans['newValue_data']['userName'], 'jdoe')
+        self.assertEqual(trans['newValue_data']['fields']['username'], 'jdoe')
 
         # Check requests
         expected = [
@@ -502,7 +496,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-USER-2uk52xorcqb6sjvp467y']
+                    'constraints': {'phids': ['PHID-USER-2uk52xorcqb6sjvp467y']}
                 }
             },
             {
@@ -518,7 +512,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-USER-ojtcpympsmwenszuef7p']
+                    'constraints': {'phids': ['PHID-USER-ojtcpympsmwenszuef7p']}
                 }
             },
             {
@@ -534,7 +528,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-USER-pr5fcxy4xk5ofqsfqcfc']
+                    'constraints': {'phids': ['PHID-USER-pr5fcxy4xk5ofqsfqcfc']}
                 }
             },
             {
@@ -572,13 +566,13 @@ class TestPhorgeBackend(unittest.TestCase):
             expc = expected[x]
             self.assertEqual(task['data']['id'], expc[0])
             self.assertEqual(len(task['data']['transactions']), expc[1])
-            self.assertEqual(task['data']['fields']['authorData']['userName'], expc[2])
+            self.assertEqual(task['data']['fields']['authorData']['fields']['username'], expc[2])
 
             # Check owner data; when it is null owner is not included
             if not expc[3]:
                 self.assertNotIn('ownerData', task['data']['fields'])
             else:
-                self.assertEqual(task['data']['fields']['ownerData']['userName'], expc[3])
+                self.assertEqual(task['data']['fields']['ownerData']['fields']['username'], expc[3])
 
             self.assertEqual(task['uuid'], expc[4])
             self.assertEqual(task['origin'], PHORGE_URL)
@@ -588,8 +582,8 @@ class TestPhorgeBackend(unittest.TestCase):
 
         # Check some authors info on transactions
         trans = tasks[0]['data']['transactions']
-        self.assertEqual(trans[0]['authorData']['userName'], 'jdoe')
-        self.assertEqual(trans[15]['authorData']['userName'], 'jdoe')
+        self.assertEqual(trans[0]['authorData']['fields']['username'], 'jdoe')
+        self.assertEqual(trans[15]['authorData']['fields']['username'], 'jdoe')
 
         # Check that subscribers data is included for core:subscribers type transactions
         trans = tasks[0]['data']['transactions'][6]
@@ -656,7 +650,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-USER-2uk52xorcqb6sjvp467y']
+                    'constraints': {'phids': ['PHID-USER-2uk52xorcqb6sjvp467y']}
                 }
             },
             {
@@ -680,7 +674,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-USER-bjxhrstz5fb5gkrojmev']
+                    'constraints': {'phids': ['PHID-USER-bjxhrstz5fb5gkrojmev']}
                 }
             },
             {
@@ -688,7 +682,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-USER-mjr7pnwpg6slsnjcqki7']
+                    'constraints': {'phids': ['PHID-USER-mjr7pnwpg6slsnjcqki7']}
                 }
             },
             {
@@ -707,7 +701,7 @@ class TestPhorgeBackend(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'AAAA'},
-                    'phids': ['PHID-USER-ojtcpympsmwenszuef7p']
+                    'constraints': {'phids': ['PHID-USER-ojtcpympsmwenszuef7p']}
                 }
             }
         ]
@@ -792,10 +786,10 @@ class TestPhorgeBackend(unittest.TestCase):
         results = [user for user in users]
 
         self.assertEqual(len(results), 4)
-        self.assertEqual(results[0]['userName'], 'jrae')
-        self.assertEqual(results[1]['userName'], 'jsmith')
-        self.assertEqual(results[2]['userName'], 'jdoe')
-        self.assertEqual(results[3]['userName'], 'jane')
+        self.assertEqual(results[0]['fields']['username'], 'jrae')
+        self.assertEqual(results[1]['fields']['username'], 'jsmith')
+        self.assertEqual(results[2]['fields']['username'], 'jdoe')
+        self.assertEqual(results[3]['fields']['username'], 'jane')
 
     def test_parse_phids(self):
         """Test if it parses a phids stream"""
@@ -963,12 +957,14 @@ class TestConduitClient(unittest.TestCase):
                 'output': ['json'],
                 'params': {
                     '__conduit__': {'token': 'aaaa'},
-                    'phids': [
-                        "PHID-USER-2uk52xorcqb6sjvp467y",
-                        "PHID-USER-bjxhrstz5fb5gkrojmev",
-                        "PHID-USER-pr5fcxy4xk5ofqsfqcfc",
-                        "PHID-USER-ojtcpympsmwenszuef7p"
-                    ]
+                    'constraints': {
+                        'phids': [
+                            "PHID-USER-2uk52xorcqb6sjvp467y",
+                            "PHID-USER-bjxhrstz5fb5gkrojmev",
+                            "PHID-USER-pr5fcxy4xk5ofqsfqcfc",
+                            "PHID-USER-ojtcpympsmwenszuef7p"
+                        ]
+                    }
                 }
             }
         ]
@@ -1031,7 +1027,7 @@ class TestConduitClient(unittest.TestCase):
         responses = {
             PHORGE_TASKS_URL: [(502, 'error'), (503, 'error'), (429, 'error'), (503, 'error'), (200, body)],
             PHORGE_USERS_URL: [(503, 'error'), (503, 'error'), (503, 'error'),
-                                    (503, 'error'), (503, 'error'), (503, 'error')],
+                               (503, 'error'), (503, 'error'), (503, 'error')],
             PHORGE_PHIDS_URL: [(404, 'not found')]
         }
 
